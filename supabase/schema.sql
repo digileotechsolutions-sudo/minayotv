@@ -1,0 +1,15 @@
+create extension if not exists "pgcrypto";
+create table if not exists public.categories (id uuid primary key default gen_random_uuid(), name text unique not null, slug text unique not null, description text);
+create table if not exists public.authors (id uuid primary key default gen_random_uuid(), name text not null, email text unique, bio text, role text);
+create table if not exists public.users (id uuid primary key references auth.users(id) on delete cascade, role text default 'editor', display_name text);
+create table if not exists public.articles (id uuid primary key default gen_random_uuid(), title text not null, slug text unique not null, summary text, content text[], excerpt text, category_id uuid references categories(id), author_id uuid references authors(id), featured_image text, social_image text, seo_title text, seo_description text, tags jsonb default '[]', status text default 'draft' check (status in ('draft','published','scheduled','archived')), published_at timestamptz, scheduled_at timestamptz, created_at timestamptz default now(), updated_at timestamptz default now(), created_by uuid references users(id), featured boolean default false, trending integer);
+create table if not exists public.tags (id uuid primary key default gen_random_uuid(), name text unique not null);
+create table if not exists public.article_tags (article_id uuid references articles(id) on delete cascade, tag_id uuid references tags(id) on delete cascade, primary key(article_id, tag_id));
+create table if not exists public.comments (id uuid primary key default gen_random_uuid(), article_id uuid references articles(id), user_id uuid references users(id), body text not null, approved boolean default false, created_at timestamptz default now());
+create table if not exists public.newsletter_subscribers (id uuid primary key default gen_random_uuid(), email text unique not null, created_at timestamptz default now());
+create policy "Articles readable by everyone" on public.articles for select using (status = 'published' or created_by = auth.uid());
+create policy "Administrators manage articles" on public.articles for all using (exists (select 1 from public.users where id = auth.uid() and role in ('admin','editor'))) with check (exists (select 1 from public.users where id = auth.uid() and role in ('admin','editor')));
+create policy "Users manage comments" on public.comments for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "Newsletter subscribers insert own address" on public.newsletter_subscribers for insert with check (true);
+create or replace function public.handle_new_user() returns trigger language plpgsql security definer as $$ begin insert into public.users(id, role, display_name) values (new.id, 'editor', coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1))) on conflict (id) do update set display_name=coalesce(excluded.display_name, users.display_name); return new; end; $$;
+create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();
