@@ -1,0 +1,2 @@
+# minayotv
+news blog
